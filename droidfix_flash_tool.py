@@ -833,13 +833,12 @@ class App(tk.Tk):
 
     # ---------------- Xiaomi MediaTek Tool ----------------
     def find_xiaomi_mtk_engine(self):
-        """Cari Python & script mtkclient di sistem atau folder TMT."""
-        tmt_data = Path(r"C:\Users\Chairil\Documents\TMT  XIAOMI BOOTLOADER TOOL\data")
+        """Cari Python & script mtkclient di sistem atau folder tools/xiaomi."""
         roots = [
-            tmt_data,
             BASE_DIR / "tools" / "xiaomi",
             BASE_DIR / "tools" / "mtk",
             BASE_DIR / "data",
+            Path(r"C:\Users\Chairil\Documents\TMT  XIAOMI BOOTLOADER TOOL\data"),
         ]
         for r in roots:
             py = r / "python.exe" if IS_WIN else r / "python3"

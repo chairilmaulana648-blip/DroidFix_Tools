@@ -1,0 +1,5 @@
+wheel
+pyusb
+pycryptodome
+colorama
+usb

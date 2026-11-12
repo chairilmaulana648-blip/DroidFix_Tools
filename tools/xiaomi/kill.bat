@@ -1,0 +1,7 @@
+ÿþ
+@echo off
+title GSM SULTENG
+mode 43,6
+taskkill /f /im python.exe
+taskkill /f /im ft.exe
+exit
