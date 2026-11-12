@@ -93,12 +93,55 @@ class SupabaseClient:
         except Exception as e:
             return -1, {"message": str(e)}
 
+    # ---- Token Aktivasi Admin ----
+    def verify_token(self, token_code):
+        """Periksa apakah token dari admin valid dan belum dipakai."""
+        token_code = token_code.strip()
+        if not token_code:
+            return False, "Token aktivasi wajib diisi!"
+
+        url_enc = urllib.parse.quote(token_code)
+        status, res = self._request(f"/rest/v1/activation_tokens?token_code=eq.{url_enc}&select=*")
+        if status == 200 and isinstance(res, list):
+            if len(res) == 0:
+                return False, "Token aktivasi tidak terdaftar! Minta token ke Admin."
+            tok = res[0]
+            if tok.get("is_used"):
+                return False, f"Token ini sudah digunakan pada {str(tok.get('used_at', ''))[:10]} oleh {tok.get('used_by', 'pengguna lain')}."
+            return True, "Token valid!"
+        return False, "Gagal memverifikasi token ke database Supabase."
+
+    def consume_token(self, token_code, email):
+        """Tandai token sebagai sudah terpakai."""
+        try:
+            url_enc = urllib.parse.quote(token_code.strip())
+            payload = {
+                "is_used": True,
+                "used_by": email,
+                "used_at": datetime.utcnow().isoformat() + "Z",
+            }
+            self._request(f"/rest/v1/activation_tokens?token_code=eq.{url_enc}", method="PATCH", data=payload)
+        except Exception:
+            pass
+
     # ---- Autentikasi ----
     def login(self, email, password):
+        email = email.strip()
         endpoint = "/auth/v1/token?grant_type=password"
-        payload = {"email": email.strip(), "password": password}
+        payload = {"email": email, "password": password}
         status, res = self._request(endpoint, method="POST", data=payload)
         if status == 200:
+            user_id = res.get("user", {}).get("id")
+            # Cek status lisensi jika bukan akun admin
+            if email.lower() != "chairilmaulan06@gmail.com" and user_id:
+                prof_st, prof_res = self._request(f"/rest/v1/users_profile?id_user=eq.{user_id}&select=*")
+                if prof_st == 200 and isinstance(prof_res, list) and len(prof_res) > 0:
+                    sub_st = prof_res[0].get("subscription_status", "active")
+                    if sub_st in ("banned", "suspended"):
+                        return False, "Akun Anda telah DIBLOKIR oleh Admin! Hubungi Admin untuk aktivasi."
+                    elif sub_st in ("pending", "expired"):
+                        return False, "Akun Anda belum aktif/masa aktif habis. Hubungi Admin untuk token aktivasi."
+
             self.session = res
             self.save_session(res)
             # Sync client PC
@@ -111,10 +154,21 @@ class SupabaseClient:
             msg = "Email atau password salah!"
         return False, msg
 
-    def signup(self, email, password, full_name="", username=""):
+    def signup(self, email, password, token_code="", full_name="", username=""):
+        email = email.strip()
+        is_admin = (email.lower() == "chairilmaulan06@gmail.com")
+
+        # Jika bukan akun admin, token aktivasi WAJIB diverifikasi
+        if not is_admin:
+            if not token_code.strip():
+                return False, "Pendaftaran akun baru wajib menggunakan Token Aktivasi dari Admin!"
+            ok, msg = self.verify_token(token_code.strip())
+            if not ok:
+                return False, msg
+
         endpoint = "/auth/v1/signup"
         payload = {
-            "email": email.strip(),
+            "email": email,
             "password": password,
             "data": {
                 "full_name": full_name or email.split("@")[0],
@@ -123,11 +177,16 @@ class SupabaseClient:
         }
         status, res = self._request(endpoint, method="POST", data=payload)
         if status in (200, 201):
+            # Hanguskan token setelah pendaftaran berhasil
+            if not is_admin and token_code.strip():
+                self.consume_token(token_code.strip(), email)
+
             if res.get("access_token"):
                 self.session = res
                 self.save_session(res)
-                return True, "Pendaftaran berhasil & langsung login!"
-            return True, "Pendaftaran berhasil! Cek email untuk konfirmasi akun (atau login jika konfirmasi dinonaktifkan)."
+                threading.Thread(target=self.sync_client, daemon=True).start()
+                return True, "Aktivasi berhasil! Akun Anda aktif dan langsung login."
+            return True, "Pendaftaran berhasil! Akun Anda aktif dan siap digunakan."
         msg = res.get("msg") or res.get("message") or "Pendaftaran gagal"
         if "weak_password" in str(res):
             msg = "Password terlalu pendek (minimal 6 karakter)!"
@@ -175,8 +234,25 @@ class SupabaseClient:
     # ---- Sync PC & Log ----
     def sync_client(self, app_version="1.0.0"):
         user_id = self.get_user_id()
+        email = self.get_user_email()
         if not user_id:
             return
+
+        # 1. Pastikan profil user tersimpan di users_profile
+        try:
+            uname = email.split("@")[0] if email else "technician"
+            profile_payload = {
+                "id_user": user_id,
+                "username": uname,
+                "full_name": uname.capitalize(),
+                "role": "technician",
+                "subscription_status": "active",
+            }
+            self._request("/rest/v1/users_profile?on_conflict=id_user", method="POST", data=profile_payload)
+        except Exception:
+            pass
+
+        # 2. Upsert client ke table app_clients
         payload = {
             "hwid": self.hwid,
             "id_user": user_id,
@@ -186,7 +262,6 @@ class SupabaseClient:
             "is_active": True,
             "last_seen_at": datetime.utcnow().isoformat() + "Z",
         }
-        # Upsert client ke table app_clients
         endpoint = "/rest/v1/app_clients?on_conflict=hwid"
         self._request(endpoint, method="POST", data=payload)
 
@@ -275,6 +350,110 @@ DEFAULT_XIAOMI_MODELS = [
 
 
 # ==============================================================================
+# GUI DIALOG REGISTRASI & AKTIVASI TOKEN ADMIN
+# ==============================================================================
+class RegisterDialog:
+    def __init__(self, parent, client: SupabaseClient, on_success_callback):
+        self.client = client
+        self.on_success_callback = on_success_callback
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("DroidFix - Aktivasi Akun Baru")
+        self.win.geometry("440x510")
+        self.win.resizable(False, False)
+        self.win.configure(bg=BG)
+        self.win.transient(parent)
+        self.win.grab_set()
+
+        # Posisi di tengah parent
+        self.win.update_idletasks()
+        w, h = 440, 510
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (w // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (h // 2)
+        self.win.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        pad = {"padx": 24, "pady": 4}
+
+        # Header
+        lbl_head = tk.Label(self.win, text="REGISTRASI & AKTIVASI LISENSI", font=("Segoe UI", 13, "bold"), fg=ACCENT, bg=BG)
+        lbl_head.pack(pady=(20, 2))
+        lbl_sub = tk.Label(self.win, text="Wajib Memasukkan Token Verifikasi dari Admin", font=("Segoe UI", 8), fg=MUTED, bg=BG)
+        lbl_sub.pack(pady=(0, 14))
+
+        # Email
+        tk.Label(self.win, text="Email Teknisi:", font=("Segoe UI", 9, "bold"), fg=FG, bg=BG, anchor="w").pack(fill="x", **pad)
+        self.ent_email = tk.Entry(self.win, font=("Segoe UI", 10), bg=BTN, fg=FG, insertbackground=FG, relief="flat", highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
+        self.ent_email.pack(fill="x", ipady=5, **pad)
+
+        # Password
+        tk.Label(self.win, text="Password (minimal 6 karakter):", font=("Segoe UI", 9, "bold"), fg=FG, bg=BG, anchor="w").pack(fill="x", **pad)
+        self.ent_pass = tk.Entry(self.win, show="*", font=("Segoe UI", 10), bg=BTN, fg=FG, insertbackground=FG, relief="flat", highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
+        self.ent_pass.pack(fill="x", ipady=5, **pad)
+
+        # Token Aktivasi Admin
+        tk.Label(self.win, text="Token Aktivasi Lisensi (dari Admin):", font=("Segoe UI", 9, "bold"), fg=AMBER, bg=BG, anchor="w").pack(fill="x", **pad)
+        self.ent_token = tk.Entry(self.win, font=("Consolas", 11, "bold"), bg=BTN, fg=AMBER, insertbackground=FG, relief="flat", highlightthickness=1, highlightbackground=AMBER, highlightcolor=GREEN)
+        self.ent_token.pack(fill="x", ipady=6, **pad)
+
+        # Help info
+        info_frame = tk.Frame(self.win, bg="#1a202c", padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
+        info_frame.pack(fill="x", padx=24, pady=(8, 4))
+        tk.Label(info_frame, text="ℹ️ Belum memiliki token aktivasi?\nSilakan hubungi Admin Chairil Maulana untuk mendapatkan token lisensi sebelum mendaftar.",
+                 font=("Segoe UI", 8), fg=MUTED, bg="#1a202c", justify="left").pack(anchor="w")
+
+        # Status Label
+        self.lbl_msg = tk.Label(self.win, text="", font=("Segoe UI", 8), fg=AMBER, bg=BG, wraplength=380)
+        self.lbl_msg.pack(pady=(6, 2))
+
+        # Buttons
+        btn_frame = tk.Frame(self.win, bg=BG)
+        btn_frame.pack(fill="x", pady=12, padx=24)
+
+        self.btn_submit = tk.Button(btn_frame, text="Verifikasi Token & Aktifkan Akun", font=("Segoe UI", 10, "bold"),
+                                    bg=ACCENT, fg="#0b0f19", activebackground="#26b3a2", relief="flat", cursor="hand2",
+                                    command=self._do_register)
+        self.btn_submit.pack(fill="x", ipady=6, pady=(0, 6))
+
+        tk.Button(btn_frame, text="Batal / Kembali ke Login", font=("Segoe UI", 9), bg=BTN, fg=FG,
+                  activebackground=BTN_H, relief="flat", cursor="hand2", command=self.win.destroy).pack(fill="x", ipady=4)
+
+    def _do_register(self):
+        email = self.ent_email.get().strip()
+        pwd = self.ent_pass.get()
+        token = self.ent_token.get().strip()
+
+        if not email or len(pwd) < 6:
+            self.lbl_msg.config(text="Email valid dan password minimal 6 karakter wajib diisi!", fg=RED)
+            return
+        if not token and email.lower() != "chairilmaulan06@gmail.com":
+            self.lbl_msg.config(text="Token Aktivasi dari Admin wajib diisi!", fg=RED)
+            return
+
+        self.btn_submit.config(state="disabled", text="Memverifikasi ke Admin...")
+        self.lbl_msg.config(text="Memeriksa token ke Supabase...", fg=ACCENT)
+        self.win.update_idletasks()
+
+        def _task():
+            ok, res = self.client.signup(email, pwd, token_code=token)
+            self.win.after(0, lambda: self._on_finish(ok, res, email))
+
+        threading.Thread(target=_task, daemon=True).start()
+
+    def _on_finish(self, ok, res, email):
+        self.btn_submit.config(state="normal", text="Verifikasi Token & Aktifkan Akun")
+        if ok:
+            messagebox.showinfo("Aktivasi Sukses", f"{res}\n\nSilakan langsung login menggunakan email dan password Anda.", parent=self.win)
+            if self.on_success_callback:
+                self.on_success_callback(email)
+            self.win.destroy()
+        else:
+            self.lbl_msg.config(text=f"Aktivasi Gagal: {res}", fg=RED)
+
+
+# ==============================================================================
 # GUI DIALOG LOGIN DROIDFIX
 # ==============================================================================
 class LoginDialog:
@@ -332,7 +511,7 @@ class LoginDialog:
         self.btn_login = tk.Button(btn_frame, text="Masuk (Login)", font=("Segoe UI", 10, "bold"), bg=ACCENT, fg="#0b0f19", activebackground="#26b3a2", relief="flat", cursor="hand2", command=self._do_login)
         self.btn_login.pack(fill="x", ipady=6, pady=(0, 8))
 
-        self.btn_reg = tk.Button(btn_frame, text="Daftar Akun Baru (Register)", font=("Segoe UI", 9), bg=BTN, fg=FG, activebackground=BTN_H, relief="flat", cursor="hand2", command=self._do_signup)
+        self.btn_reg = tk.Button(btn_frame, text="Daftar Akun Baru (Minta Token Admin)", font=("Segoe UI", 9), bg=BTN, fg=FG, activebackground=BTN_H, relief="flat", cursor="hand2", command=self._open_register_dialog)
         self.btn_reg.pack(fill="x", ipady=4)
 
         # Footer HWID
@@ -341,6 +520,15 @@ class LoginDialog:
 
         # Enter key triggers login
         self.root.bind("<Return>", lambda e: self._do_login())
+
+    def _open_register_dialog(self):
+        RegisterDialog(self.root, self.client, on_success_callback=self._on_user_registered)
+
+    def _on_user_registered(self, email):
+        self.ent_email.delete(0, "end")
+        self.ent_email.insert(0, email)
+        self.ent_pass.delete(0, "end")
+        self.lbl_msg.config(text="Akun berhasil diaktivasi! Silakan login.", fg=GREEN)
 
     def _do_login(self):
         email = self.ent_email.get().strip()
@@ -366,31 +554,6 @@ class LoginDialog:
             self.root.after(400, self._proceed)
         else:
             self.lbl_msg.config(text=f"Error: {res}", fg=RED)
-
-    def _do_signup(self):
-        email = self.ent_email.get().strip()
-        pwd = self.ent_pass.get()
-        if not email or len(pwd) < 6:
-            self.lbl_msg.config(text="Password minimal 6 karakter!", fg=RED)
-            return
-
-        self.btn_reg.config(state="disabled", text="Mendaftar...")
-        self.lbl_msg.config(text="Mendaftarkan akun ke Supabase...", fg=ACCENT)
-        self.root.update_idletasks()
-
-        def _task():
-            ok, res = self.client.signup(email, pwd)
-            self.root.after(0, lambda: self._on_signup_finish(ok, res))
-
-        threading.Thread(target=_task, daemon=True).start()
-
-    def _on_signup_finish(self, ok, res):
-        self.btn_reg.config(state="normal", text="Daftar Akun Baru (Register)")
-        if ok:
-            messagebox.showinfo("Supabase Auth", res, parent=self.root)
-            self.lbl_msg.config(text=res, fg=GREEN)
-        else:
-            self.lbl_msg.config(text=f"Gagal: {res}", fg=RED)
 
     def _proceed(self):
         self.root.destroy()

@@ -16,6 +16,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -831,14 +833,15 @@ class App(tk.Tk):
             self.log(f"✗ odin4 gagal (kode {rc}). Pastikan HP di mode Download, driver terpasang, "
                      f"dan file firmware benar.", "err")
 
-    # ---------------- Xiaomi MediaTek Tool ----------------
+    # ---------------- Xiaomi MediaTek Tool (Solusi 2: Cloud Auto-Download) ----------------
+    XIAOMI_ENGINE_URL = "https://sxdhwmrtzuzuzdcjxsso.supabase.co/storage/v1/object/public/engines/xiaomi_mtk_engine.zip"
+
     def find_xiaomi_mtk_engine(self):
-        """Cari Python & script mtkclient di sistem atau folder tools/xiaomi."""
+        """Cari Python & script mtkclient di sistem atau folder tools/xiaomi (Solusi 2)."""
         roots = [
             BASE_DIR / "tools" / "xiaomi",
             BASE_DIR / "tools" / "mtk",
             BASE_DIR / "data",
-            Path(r"C:\Users\Chairil\Documents\TMT  XIAOMI BOOTLOADER TOOL\data"),
         ]
         for r in roots:
             py = r / "python.exe" if IS_WIN else r / "python3"
@@ -854,15 +857,86 @@ class App(tk.Tk):
 
         return None, None, None
 
+    def update_xiaomi_engine_ui(self):
+        py_exe, mtk_script, mtk_dir = self.find_xiaomi_mtk_engine()
+        if hasattr(self, "lbl_engine_info") and hasattr(self, "btn_dl_engine"):
+            if py_exe:
+                self.lbl_engine_info.config(text=f"✓ Engine Xiaomi MTK aktif & siap digunakan ({mtk_dir}).", foreground=GREEN)
+                self.btn_dl_engine.config(text="🔄 Unduh Ulang Engine", style="TButton")
+                self.ec_prog_frame.pack_forget()
+            else:
+                self.lbl_engine_info.config(text="⚠️ Engine Xiaomi MTK belum diunduh (±29 MB). Unduh otomatis dari Cloud Supabase sekali saja.", foreground=AMBER)
+                self.btn_dl_engine.config(text="📥 Unduh & Pasang Engine Xiaomi", style="Accent.TButton")
+
+    def start_download_engine(self):
+        self.btn_dl_engine.config(state="disabled", text="Mengunduh...")
+        self.ec_prog_frame.pack(fill="x", pady=(6, 2))
+        self.pb_engine["value"] = 0
+        self.lbl_engine_percent.config(text="Memulai unduhan...")
+        self.log("Memulai pengunduhan Engine Xiaomi MTK dari Cloud Supabase...", "info")
+
+        def _worker():
+            tools_dir = BASE_DIR / "tools"
+            tools_dir.mkdir(parents=True, exist_ok=True)
+            temp_zip = tools_dir / "temp_xiaomi_engine.zip"
+            dest_dir = tools_dir / "xiaomi"
+
+            try:
+                req = urllib.request.Request(self.XIAOMI_ENGINE_URL, headers={"User-Agent": "DroidFix-Flash-Tool/1.0"})
+                with urllib.request.urlopen(req, timeout=40) as resp:
+                    total_bytes = int(resp.headers.get("content-length", 0))
+                    downloaded = 0
+                    with open(temp_zip, "wb") as f:
+                        while True:
+                            chunk = resp.read(64 * 1024)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_bytes > 0:
+                                pct = int((downloaded / total_bytes) * 100)
+                                dl_mb = downloaded / (1024 * 1024)
+                                tot_mb = total_bytes / (1024 * 1024)
+                                txt = f"{pct}% ({dl_mb:.1f} / {tot_mb:.1f} MB)"
+                                self.ui(lambda p=pct, t=txt: self._update_dl_prog(p, t))
+
+                self.ui(lambda: self.lbl_engine_percent.config(text="Mengekstrak file engine..."))
+                self.log("Unduhan selesai. Mengekstrak file engine ke tools/xiaomi...", "ok")
+                with zipfile.ZipFile(temp_zip, "r") as zf:
+                    zf.extractall(dest_dir)
+
+                if temp_zip.exists():
+                    try:
+                        temp_zip.unlink()
+                    except Exception:
+                        pass
+
+                self.ui(lambda: self._on_dl_success())
+            except Exception as exc:
+                self.ui(lambda e=str(exc): self._on_dl_failed(e))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _update_dl_prog(self, percent, text):
+        self.pb_engine["value"] = percent
+        self.lbl_engine_percent.config(text=text)
+
+    def _on_dl_success(self):
+        self.btn_dl_engine.config(state="normal")
+        self.update_xiaomi_engine_ui()
+        self.log("✓ Engine Xiaomi MTK berhasil dipasang dari Cloud dan siap digunakan!", "ok")
+        messagebox.showinfo("Setup Engine Sukses", "Engine Xiaomi MTK berhasil diunduh dan dipasang secara otomatis!\nFitur UBL dan Bypass siap digunakan.", parent=self)
+
+    def _on_dl_failed(self, err_msg):
+        self.btn_dl_engine.config(state="normal", text="📥 Coba Unduh Lagi", style="Accent.TButton")
+        self.lbl_engine_percent.config(text="Gagal mengunduh!")
+        self.log(f"Gagal mengunduh engine dari cloud: {err_msg}", "err")
+        messagebox.showerror("Download Gagal", f"Gagal mengunduh engine dari Cloud Supabase:\n{err_msg}\n\nPastikan bucket 'engines' sudah dibuat dan file engine sudah di-upload ke Supabase Storage.", parent=self)
+
     def tab_xiaomi(self, page):
         head = ttk.Frame(page)
         head.pack(fill="x")
         ttk.Label(head, text="Xiaomi MediaTek Bootloader Tool", font=(UI_FONT, 11, "bold")).pack(side="left")
-
-        py_exe, mtk_script, mtk_dir = self.find_xiaomi_mtk_engine()
-        eng_txt = f"Engine: Terhubung ({mtk_dir})" if py_exe else "Engine: Belum terdeteksi (Folder TMT / mtk)"
-        lbl_eng = ttk.Label(head, text=eng_txt, style="Muted.TLabel")
-        lbl_eng.pack(side="right")
 
         # Petunjuk koneksi
         info_frame = ttk.Frame(page, padding=6)
@@ -870,6 +944,25 @@ class App(tk.Tk):
         ttk.Label(info_frame,
                   text="Petunjuk BROM: Matikan HP -> Tahan Vol(+) & Vol(-) bersamaan -> Colok kabel USB ke PC.",
                   foreground=ACCENT, font=(UI_FONT, 9, "bold")).pack(anchor="w")
+
+        # Setup Engine Cloud (Solusi 2)
+        self.engine_card = ttk.LabelFrame(page, text=" Setup Engine Xiaomi MTK (Cloud Auto-Download) ", padding=8)
+        self.engine_card.pack(fill="x", pady=(0, 8))
+
+        ec_top = ttk.Frame(self.engine_card)
+        ec_top.pack(fill="x")
+        self.lbl_engine_info = ttk.Label(ec_top, text="")
+        self.lbl_engine_info.pack(side="left")
+        self.btn_dl_engine = ttk.Button(ec_top, text="📥 Unduh Engine MTK", command=self.start_download_engine, style="Accent.TButton")
+        self.btn_dl_engine.pack(side="right")
+
+        self.ec_prog_frame = ttk.Frame(self.engine_card)
+        self.pb_engine = ttk.Progressbar(self.ec_prog_frame, orient="horizontal", mode="determinate")
+        self.pb_engine.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.lbl_engine_percent = ttk.Label(self.ec_prog_frame, text="", style="Muted.TLabel")
+        self.lbl_engine_percent.pack(side="right")
+
+        self.update_xiaomi_engine_ui()
 
         # Tombol Aksi Utama
         act_box = ttk.LabelFrame(page, text=" Operasi Bootloader Xiaomi (MediaTek) ", padding=10)
@@ -966,7 +1059,9 @@ class App(tk.Tk):
     def do_xiaomi_action(self, action):
         py_exe, mtk_script, mtk_dir = self.find_xiaomi_mtk_engine()
         if not py_exe or not mtk_script:
-            self.log("Mesin MTK tidak ditemukan. Pastikan folder 'TMT  XIAOMI BOOTLOADER TOOL' ada di Documents atau tools/xiaomi.", "err")
+            if messagebox.askyesno("Engine Belum Terpasang",
+                                   "Engine Xiaomi MTK belum terpasang di laptop ini.\n\nUnduh otomatis dari Cloud Supabase sekarang (±29 MB)?"):
+                self.start_download_engine()
             return
 
         cmd = [py_exe, mtk_script]
