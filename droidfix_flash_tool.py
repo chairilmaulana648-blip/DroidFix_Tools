@@ -878,18 +878,18 @@ class App(tk.Tk):
         row1 = ttk.Frame(act_box)
         row1.pack(fill="x", pady=2)
 
-        self.mkbtn(row1, "🔓 Unlock Bootloader (UBL Instan)",
+        self.mkbtn(row1, "Unlock Bootloader (UBL Instan)",
                    lambda: self.task(self.do_xiaomi_action, "ubl"), style="Accent.TButton").pack(side="left", padx=(0, 8))
-        self.mkbtn(row1, "🔒 Relock Bootloader (Kunci UBL)",
+        self.mkbtn(row1, "Relock Bootloader (Kunci UBL)",
                    lambda: self.task(self.do_xiaomi_action, "relock")).pack(side="left", padx=(0, 8))
-        self.mkbtn(row1, "⚡ Bypass Auth (SLA/DAA BROM)",
+        self.mkbtn(row1, "Bypass Auth (SLA/DAA BROM)",
                    lambda: self.task(self.do_xiaomi_action, "bypass")).pack(side="left", padx=(0, 8))
 
         row2 = ttk.Frame(act_box)
         row2.pack(fill="x", pady=(6, 2))
-        self.mkbtn(row2, "🖥️ Device Manager", self.open_dev_mgmt).pack(side="left", padx=(0, 8))
-        self.mkbtn(row2, "🔄 Scan Port COM / USB", lambda: self.task(self.scan_mtk_ports)).pack(side="left", padx=(0, 8))
-        self.mkbtn(row2, "🛑 Stop Proses", self.stop_xiaomi_process).pack(side="left")
+        self.mkbtn(row2, "Device Manager", self.open_dev_mgmt).pack(side="left", padx=(0, 8))
+        self.mkbtn(row2, "Scan Port COM / USB", lambda: self.task(self.scan_mtk_ports)).pack(side="left", padx=(0, 8))
+        self.mkbtn(row2, "Stop Proses", self.stop_xiaomi_process).pack(side="left")
 
         # Daftar Model yang Didukung (Cloud Sync via Supabase)
         model_box = ttk.LabelFrame(page, text=" Model Xiaomi MediaTek yang Didukung (Tersinkronisasi Cloud) ", padding=8)
@@ -905,7 +905,7 @@ class App(tk.Tk):
         cb_series.pack(side="left", padx=(0, 10))
         cb_series.bind("<<ComboboxSelected>>", lambda e: self.filter_xiaomi_models())
 
-        self.mkbtn(ctrl_row, "🔄 Sinkronkan dari Supabase", self.load_xiaomi_models_cloud).pack(side="right")
+        self.mkbtn(ctrl_row, "Sinkronkan dari Supabase", self.load_xiaomi_models_cloud).pack(side="right")
         self.lbl_model_count = ttk.Label(ctrl_row, text="", style="Muted.TLabel")
         self.lbl_model_count.pack(side="right", padx=10)
 
