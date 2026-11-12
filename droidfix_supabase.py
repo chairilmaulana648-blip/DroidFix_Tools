@@ -133,7 +133,7 @@ class SupabaseClient:
         if status == 200:
             user_id = res.get("user", {}).get("id")
             # Cek status lisensi jika bukan akun admin
-            if email.lower() != "chairilmaulan06@gmail.com" and user_id:
+            if email.lower() != "danu4830@gmail.com" and user_id:
                 prof_st, prof_res = self._request(f"/rest/v1/users_profile?id_user=eq.{user_id}&select=*")
                 if prof_st == 200 and isinstance(prof_res, list) and len(prof_res) > 0:
                     sub_st = prof_res[0].get("subscription_status", "active")
@@ -156,7 +156,7 @@ class SupabaseClient:
 
     def signup(self, email, password, token_code="", full_name="", username=""):
         email = email.strip()
-        is_admin = (email.lower() == "chairilmaulan06@gmail.com")
+        is_admin = (email.lower() == "danu4830@gmail.com")
 
         # Jika bukan akun admin, token aktivasi WAJIB diverifikasi
         if not is_admin:
@@ -401,7 +401,7 @@ class RegisterDialog:
         # Help info
         info_frame = tk.Frame(self.win, bg="#1a202c", padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
         info_frame.pack(fill="x", padx=24, pady=(8, 4))
-        tk.Label(info_frame, text="ℹ️ Belum memiliki token aktivasi?\nSilakan hubungi Admin Chairil Maulana untuk mendapatkan token lisensi sebelum mendaftar.",
+        tk.Label(info_frame, text="ℹ️ Belum memiliki token aktivasi?\nSilakan hubungi Admin DanzDroid untuk mendapatkan token lisensi sebelum mendaftar.",
                  font=("Segoe UI", 8), fg=MUTED, bg="#1a202c", justify="left").pack(anchor="w")
 
         # Status Label
@@ -428,7 +428,7 @@ class RegisterDialog:
         if not email or len(pwd) < 6:
             self.lbl_msg.config(text="Email valid dan password minimal 6 karakter wajib diisi!", fg=RED)
             return
-        if not token and email.lower() != "chairilmaulan06@gmail.com":
+        if not token and email.lower() != "danu4830@gmail.com":
             self.lbl_msg.config(text="Token Aktivasi dari Admin wajib diisi!", fg=RED)
             return
 
@@ -491,14 +491,14 @@ class LoginDialog:
         lbl_email.pack(fill="x", **pad)
         self.ent_email = tk.Entry(self.root, font=("Segoe UI", 10), bg=BTN, fg=FG, insertbackground=FG, relief="flat", highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
         self.ent_email.pack(fill="x", ipady=5, **pad)
-        self.ent_email.insert(0, "chairilmaulan06@gmail.com")
+        self.ent_email.insert(0, "")
 
         # Password
         lbl_pass = tk.Label(self.root, text="Password (minimal 6 karakter):", font=("Segoe UI", 9, "bold"), fg=FG, bg=BG, anchor="w")
         lbl_pass.pack(fill="x", **pad)
         self.ent_pass = tk.Entry(self.root, show="*", font=("Segoe UI", 10), bg=BTN, fg=FG, insertbackground=FG, relief="flat", highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
         self.ent_pass.pack(fill="x", ipady=5, **pad)
-        self.ent_pass.insert(0, "123456")
+        self.ent_pass.insert(0, "")
 
         # Status / Error Label
         self.lbl_msg = tk.Label(self.root, text="", font=("Segoe UI", 8), fg=AMBER, bg=BG, wraplength=370)
